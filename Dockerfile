@@ -8,7 +8,7 @@ COPY go.mod ./
 RUN go mod download
 
 COPY *.go ./
-COPY src/sem ./sem
+COPY ./sem ./sem
 
 RUN go build -o /http_server
 RUN mkdir -p /app/files
