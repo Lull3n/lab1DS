@@ -1,142 +1,152 @@
-package control
+package main
 
 import (
-	"encoding/json"
-	"lab1DS/src/becauseGO"
 	"lab1DS/src/peerNet"
+	"lab1DS/src/protocol"
 	"lab1DS/src/ring"
 	"log"
-	"math/big"
-	"net"
+	"os"
+	"strconv"
 	"time"
 )
 
 var OWN_ID string
+var neighborsLen int = 3
 var RING *ring.Ring
-var NEIGH_LEN int
 
-func StartUp(ip, port string, neigborsLen int, maintenanceTime time.Duration, ownID, joinIp, joinPort string) {
-	OWN_ID = ownID
-	netCallback := becauseGO.Callback{Callback: HandleIncoming}
-	//getKeyFromFile()
-	peerNet.CreateNetworkInstance(ip, port, netCallback)
+//func testSetup() {
+//	OWN_ID = "12778624"
+//}
 
-	NEIGH_LEN = neigborsLen
-	RING = ring.NewRing(OWN_ID, ip, port, 32, NEIGH_LEN)
+/*
+1. -a <String> = The IP address that the Chord client will bind to, as well as advertise to other nodes. Represented as
+					an ASCII string (e.g., 128.8.126.63). Must be specified.
+2. -p <Number> = The port that the Chord client will bind to and listen on. Represented as a base-10 integer. Must be specified.
+3. --ja <String> = The IP address of the machine running a Chord node. The Chord client will join this node’s ring.
+					Represented as an ASCII string (e.g., 128.8.126.63). Must be specified if --jp is specified.
+4. --jp <Number> = The port that an existing Chord node is bound to and listening on. The Chord client will join this node’s ring.
+					Represented as a base-10 integer. Must be specified if --ja is specified.
+5. --ts <Number> = The time in milliseconds between invocations of ‘stabilize’.
+					Represented as a base-10 integer. Must be specified, with a value in the range of [1,60000].
+6. --tff <Number> = The time in milliseconds between invocations of ‘fix fingers’. Represented as a base-10 integer.
+					Must be specified, with a value in the range of [1,60000].
+7. --tcp <Number> = The time in milliseconds between invocations of ‘check predecessor’.
+					Represented as a base-10 integer. Must be specified, with a value in the range of [1,60000].
+8. -r <Number> = The number of successors maintained by the Chord client. Represented as a base-10 integer.
+					Must be specified, with a value in the range of [1,32].
+9. -i <String> = The identifier (ID) assigned to the Chord client which will override the ID computed by the SHA1 sum of the client’s
+					IP address and port number. Represented as a string of 40 characters matching [0-9a-fA-F]. Optional parameter.
+*/
+
+func main() {
+	//Parse args
+
+	ip := "127.0.0.1" // defaults to localhost.
+	port := "12323"   //default port
+	maintenanceTime := 30000 * time.Millisecond
+	joinIp := ""
+	joinPort := ""
+
+	for i := 1; i < len(os.Args)-1; i++ {
+
+		switch os.Args[i] {
+		case "-a":
+			ip = os.Args[i+1]
+			println("Binding to IP: ", os.Args[i+1])
+			break
+		case "-p":
+			port = os.Args[i+1]
+			println("Binding Port: ", os.Args[i+1])
+			break
+		case "--ja": //Join ip
+			println("Joining IP: ", os.Args[i+1])
+			joinIp = os.Args[i+1]
+			break
+		case "--jp": //join port
+			println("Joining Port: ", os.Args[i+1])
+			joinPort = os.Args[i+1]
+			break
+		case "--ts":
+			maintInt, _ := strconv.Atoi(os.Args[i+1])
+			maintenanceTime = time.Duration(maintInt) * time.Millisecond
+			println("Stabilizing Time: ", os.Args[i+1])
+			break
+		case "--tff":
+			println(os.Args[i+1])
+			maintInt, _ := strconv.Atoi(os.Args[i+1])
+			maintenanceTime = time.Duration(maintInt) * time.Millisecond
+			break
+		case "--tcp":
+			println(os.Args[i+1])
+			maintInt, _ := strconv.Atoi(os.Args[i+1])
+			maintenanceTime = time.Duration(maintInt) * time.Millisecond
+			break
+		case "-i":
+			println("Overridden ID: ", os.Args[i+1])
+			OWN_ID = os.Args[i+1]
+			break
+		default:
+			continue
+		}
+	}
+
+	//testSetup()
+
+	if OWN_ID == "" {
+		log.Println("Setting random ID.")
+		OWN_ID = "172b17"
+
+	}
+
+	print("Start\n")
+	peerNet.CreateNetworkInstance(ip, port)
+
+	RING = ring.NewRing(OWN_ID, ip, port, 32, neighborsLen)
 	if joinIp != "" && joinPort != "" {
 		log.Println("Attempting to join: " + ip + ":" + port)
-		Join(joinIp, joinPort)
+		join(joinIp, joinPort)
 
 	}
+
 	maintenanceLoop(maintenanceTime)
-	log.Println("TESTING RING:")
-	//testRing(RING)
 }
 
-func testRing(myRing *ring.Ring) {
-	//var strarr = []string = {"aab", "aac", "ddd", "fff", "ff1", "abc", "abd",}
-
-	mypeer := ring.NewPeer("ddd", "1231", "12212")
-	for i := 0; i < 6; i++ {
-		myRing.AddNeighbour(*ring.NewPeer("a"+new(big.Int).SetInt64(int64(i)).Text(16), "12", "12322"))
-	}
-
-	neighList := myRing.GetNeighbors()
-	println("neighLen: ", neighList.Len())
-	for i := 0; i < neighList.Len(); i++ {
-		log.Println(neighList.Get(i).ToJsonString())
-	}
-
-	myRing.AddNeighbour(*mypeer)
-	neighList = myRing.GetNeighbors()
-	println("neighLen: ", len(neighList))
-	for i := 0; i < neighList.Len(); i++ {
-		log.Println(neighList.Get(i).ToJsonString() + "\n")
-	}
-
-}
-
-func maintenanceLoop(mTime time.Duration) {
-	for {
-		RING.FixFingers()
-		time.Sleep(10 * time.Second) //mTime)
-	}
-
-}
-
-func Join(ip, port string) {
-	owner := RING.GetOwner()
+func join(ip, port string) {
 	entry := ring.NewPeer("", ip, port)
 	log.Println("Searching for closest node on ring.")
-	closest := entry.Search(owner.ID, &owner) //peerNet.Search(*protocol.NewMessage().MakeSearch(RING.GetOwner().ID, RING.GetOwner()).Marshal(), *entry)
-	if closest == nil {
-		log.Println("ERROR: could not join network.")
-		return
-	}
+	closest := peerNet.Search(*protocol.NewMessage().MakeSearch(RING.GetOwner().ID, RING.GetOwner()).Marshal(), *entry)
 	log.Println("Found: " + closest.ID + ". Attempting notify.")
 	neighList := closest.Notify(RING.GetOwner())
 	log.Println("Node responded with: ", neighList.Len(), " nodes. Attempting add")
-	tmp := append(*neighList, *closest)
-	neighList = &tmp
+	neighList.Append(closest)
 
 	for i := 0; i < neighList.Len(); i++ {
 		RING.AddNeighbour(*neighList.Get(i))
 	}
 }
 
-func processNotify(message *ring.Message, peer *ring.Peer) {
-	neighList := RING.GetNeighbors()
-	RING.AddNeighbour(message.Owner)
-	res := new(ring.Message).MakeResponse(RING.GetOwner())
-	for i := 0; i < neighList.Len(); i++ {
-		res.Vars = append(res.Vars, neighList.Get(i).ToJsonString())
+func maintenanceLoop(mTime time.Duration) {
+	for {
+		RING.FixFingers()
+		time.Sleep(mTime)
 	}
-	peer.Send(res.Marshal())
-	peer.Close()
-}
-
-func processSearch(message *ring.Message, peer *ring.Peer) {
-	log.Println("Processing search request, Peer: " + peer.ToJsonString())
-	term := message.Vars[0]
-	println("Searching for: " + term)
-	best := RING.Search(term)
-
-	res := new(ring.Message).MakeResponse(RING.GetOwner())
-	res.Vars = append(res.Vars, best.ToJsonString())
-	peer.Send(res.Marshal())
-	peer.Close()
-	println("Done processing search")
-}
-
-func processPut(message *ring.Message, peer *ring.Peer) {
 
 }
 
-func HandleIncoming(data []byte, conn net.Conn) {
-	message := ring.Message{}
-	err := json.Unmarshal(data, &message)
-	if err != nil {
-		log.Println("ERROR UNMARSHALLING NEW CONNECTION")
-	}
-	message.Owner.SetConn(conn)
-	peer := &message.Owner
+func handleIncoming(message *protocol.MessageType) {
 
 	switch message.Action {
-	case "notify": //Should update neighbor list, and return a list of all known neighbors
-		processNotify(&message, peer)
+	case "notify":
+
 		break
 	case "search":
-		processSearch(&message, peer)
+			
 		break
 	case "put":
-		processPut(&message, peer)
 		break
 	case "fetch":
 		break
-	case "response":
-		break
-	case "error":
-		break
+
 	}
 }
 
@@ -170,7 +180,7 @@ func maintainFingers() {
 		if startPoint != nil {
 			var tmpVars []string
 			tmpVars = append(tmpVars, searchTerm)
-			bytes, err := json.Marshal(Message{Owner: getOwnerStruct(), Action: "search", Vars: tmpVars})
+			bytes, err := json.Marshal(MessageType{Owner: getOwnerStruct(), Action: "search", Vars: tmpVars})
 			if err != nil {
 				log.Println("ERROR MARSHALLING SEARCH IN FINGER MAINTENANCE: ", err.Error())
 			}
@@ -198,7 +208,7 @@ func fingerSearch(id string) *ring.Peer {
 	return foundPeer
 }
 
-func searchResponse(message Message, conn net.Conn) {
+func searchResponse(message MessageType, conn net.Conn) {
 	log.Println("Building search response.")
 	log.Println("Vars: ", message.Vars, "LEN: ", len(message.Vars))
 	//message.Vars = []string(message.Vars)
@@ -228,7 +238,7 @@ func searchResponse(message Message, conn net.Conn) {
 	}
 	var vars []string
 	vars = append(vars, string(peerBytes))
-	response, err := json.Marshal(Message{
+	response, err := json.Marshal(MessageType{
 		Action: "searchResponse",
 		Owner:  getOwnerStruct(),
 		Vars:   vars,
@@ -242,7 +252,7 @@ func searchResponse(message Message, conn net.Conn) {
 	sendToPeer(conn, response)
 }
 
-func respondToNotify(message Message, conn net.Conn) {
+func respondToNotify(message MessageType, conn net.Conn) {
 
 	newList := new(PeerList)
 
@@ -256,14 +266,14 @@ func respondToNotify(message Message, conn net.Conn) {
 		resList = append(resList, string(preBytes))
 	}
 
-	response := Message{Action: "notifyResponse", Owner: getOwnerStruct(), Vars: resList}
+	response := MessageType{Action: "notifyResponse", Owner: getOwnerStruct(), Vars: resList}
 
 	jsonres, _ := json.Marshal(response)
 	sendToPeer(conn, jsonres)
 
 }
 
-func handleIncoming(message Message, conn net.Conn) {
+func handleIncoming(message MessageType, conn net.Conn) {
 	switch message.Action {
 	case "notify":
 		respondToNotify(message, conn)
@@ -282,7 +292,7 @@ func handleIncoming(message Message, conn net.Conn) {
 func join(ip string, port string) {
 
 	message, err := json.Marshal(
-		Message{
+		MessageType{
 			Action: "search",
 			Owner: ring.Peer{
 				Ip:   OWN_IP,
@@ -322,7 +332,7 @@ func join(ip string, port string) {
 func notify(peer ring.Peer) {
 	sucConn := connectToPeer(peer.Ip, peer.Port)
 	message, err := json.Marshal(
-		Message{
+		MessageType{
 			Owner:  getOwnerStruct(),
 			Action: "notify"})
 
@@ -331,7 +341,7 @@ func notify(peer ring.Peer) {
 	}
 	sendToPeer(sucConn, message)
 	//sucConn.Close()
-	response := Message{}
+	response := MessageType{}
 	err = json.Unmarshal(listenForData(sucConn), &response)
 	rawNeighbors := response.Vars
 	var neighbors PeerList
