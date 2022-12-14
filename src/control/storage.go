@@ -1,9 +1,8 @@
-package control
+package main
 
 import (
 	"bytes"
 	"io"
-	"lab1DS/src/peerNet"
 	"log"
 	"net"
 	"os"
@@ -13,7 +12,7 @@ var filePath = "/Users/karthik/Public/tmp/"
 
 func storeFile(fileName string, conn net.Conn) {
 
-	data := peerNet.ListenForData(conn)
+	data := listenForData(conn)
 
 	dataReader := bytes.NewReader(data)
 

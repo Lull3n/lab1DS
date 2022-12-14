@@ -2,6 +2,8 @@ package ring
 
 import (
 	"context"
+	"lab1DS/src/peerNet"
+	"lab1DS/src/protocol"
 	"lab1DS/src/sem"
 	"log"
 	"math/big"
@@ -12,6 +14,7 @@ var ID_MAX int64 = 1 << 32
 
 type Ring struct {
 	neighbors     PeerList
+	successors    PeerList
 	fingerTable   PeerList
 	owner         Peer
 	MAX_NEIGHBORS int
@@ -24,62 +27,43 @@ func NewRing(ownId, ownIp, ownPort string, fingerSize int, maxNeighbors int) *Ri
 	ret.FINGERS_SIZE = fingerSize
 	ret.MAX_NEIGHBORS = maxNeighbors
 	ret.owner = *NewPeer(ownId, ownIp, ownPort)
-	ret.modifySem = *sem.NewWeighted(1)
 	return ret
 }
 
-func (a *Ring) GetOwner() Peer {
+func (a Ring) GetOwner() Peer {
 	return a.owner
 }
 
-func (a *Ring) GetNeighbors() PeerList {
-	a.modifySem.Acquire(context.Background(), 1)
-	ret := a.neighbors // Supposedly hard copy
-	a.modifySem.Release(1)
-	return ret
-}
-
-func (a *Ring) AddNeighbour(peer Peer) {
-	if peer.ID == a.owner.ID {
-		return
-	}
+func (a Ring) AddNeighbour(peer Peer) {
 	log.Println("Adding neighbour: " + peer.ID)
 	a.modifySem.Acquire(context.Background(), 1)
-	//neigh := a.neighbors
+	neigh := a.neighbors
 	ownId := a.owner.ID
 
-	a.neighbors = append(a.neighbors, peer)
-	sort.Sort(a.neighbors)
+	neigh.Append(peer)
+	sort.Sort(neigh)
 	index := 0
 
-	for i := 0; i < a.neighbors.Len(); i++ {
-		if a.neighbors[i].ID < ownId {
+	for i := 0; i < neigh.Len(); i++ {
+		if neigh[i].ID < ownId {
 			index++
 		} else {
 			break
 		}
 	}
 
-	if a.neighbors.Len() > a.MAX_NEIGHBORS*2 {
-		log.Println("Too many neighbours, triggered removal.")
-		removal := (index + a.MAX_NEIGHBORS - 1) % a.neighbors.Len() // Should be the diametrical opposite of index
-		log.Println("Removing index: ", removal, "With id: "+a.neighbors.Get(removal).ID)
+	if neigh.Len() > a.MAX_NEIGHBORS*2 {
+		removal := (index + a.MAX_NEIGHBORS) % neigh.Len() // Should be the diametrical opposite of index
 		a.RemoveNeighbor(removal)
 	}
 	a.modifySem.Release(1)
 }
 
-func (a *Ring) RemoveNeighbor(index int) {
-	println("Removing neighbour with index: ", index)
+func (a Ring) RemoveNeighbor(index int) {
 	a.neighbors = append(a.neighbors[:index], a.neighbors[index+1:]...)
 }
 
-// Search Not to be confused witht the Peer.search() function this function conducts an internal search on the ring
-// itself, and returns the closest found peer either by looking ats its immidiete neighbors, */
-func (a *Ring) Search(term string) *Peer {
-	tmp, _ := new(big.Int).SetString(term, 16)
-	internalTerm := tmp.Int64()
-	println("internal searchfor ", internalTerm)
+func (a Ring) Search(term string) *Peer {
 	if a.neighbors.Len() == 0 { // Know no peers, cant help further than self.
 		return &a.owner
 	}
@@ -97,7 +81,7 @@ func (a *Ring) Search(term string) *Peer {
 	}
 	if neigh.Len() < a.MAX_NEIGHBORS*2 { // We have complete knowledge of the ring.
 		for i := 0; i < neigh.Len(); i++ {
-			if *neigh[i].Int64() > internalTerm {
+			if neigh[i].ID > term {
 				return &neigh[i]
 			}
 		}
@@ -106,29 +90,49 @@ func (a *Ring) Search(term string) *Peer {
 			return &a.owner
 		}
 		return &neigh[0]
+
+		/*
+			if succIndex- a.MAX_NEIGHBORS == 0 { // centered acyclic neighbour list
+				// Look through neighbours from index and down or up.
+				if term < a.owner.ID{
+					if term < neigh[succIndex- 1].ID && term < neigh[succIndex-2].ID{
+						return a.FingerSearch(term)
+					} else if term < neigh[succIndex-1].ID{
+						return &neigh[succIndex-1]
+					} else{
+						return &a.owner
+					}
+				} else{ // look up
+					if term > neigh[succIndex].ID {
+						return a.FingerSearch(term)
+					} else{
+						return &neigh[succIndex]
+					}
+				}
+
+			}
+		*/
 	} else { //If we don't have complete knowledge. We check if we, or our immediate successor is the successor of the
 		// searchTerm. If not. we return the result of a fingerSearch.
 		preIndex := succIndex - 1%neigh.Len()
-		if internalTerm < *a.owner.Int64() { // look down
-			if internalTerm < *neigh[preIndex].Int64() {
+		if term < a.owner.ID { // look down
+			if term < neigh[preIndex].ID {
 				return a.FingerSearch(term)
 			} else {
 				return &a.owner
 			}
 		} else { // look up
-			if internalTerm > *neigh[succIndex].Int64() {
+			if term > neigh[succIndex].ID {
 				return a.FingerSearch(term)
 			} else {
 				return &neigh[succIndex]
 			}
 		}
+
 	}
 }
 
-// FingerSearch  This function conducts a search in the fingertable, and
-// returns the closest found node to the term, which is not its successor. */
-func (a *Ring) FingerSearch(term string) *Peer {
-	println("Finger search for" + term)
+func (a Ring) FingerSearch(term string) *Peer {
 	a.modifySem.Acquire(context.Background(), 1)
 	fingerCopy := a.fingerTable
 	a.modifySem.Release(1)
@@ -144,72 +148,83 @@ func (a *Ring) FingerSearch(term string) *Peer {
 	return &fingerCopy[fingerCopy.Len()-1]
 }
 
-// FixFingers  Function refreshes the fingers for node a. This is done by conducting a search call for the ids
-//
-//	that would populate a full fingertable./*
-func (a *Ring) FixFingers() {
-	println("attempting to fix fingers")
+func (a Ring) FixFingers() {
 	a.modifySem.Acquire(context.Background(), 1)
-	log.Println("Owner id: " + a.owner.ID)
 	ownerId, err := new(big.Int).SetString(a.owner.ID, 16)
 	if !err {
 		log.Println("ERROR Parsing id whilst building fingerTable")
-		return
 	}
 	var slider int64 = 1
 
 	for i := 0; i < a.FINGERS_SIZE; i++ {
 		searchId := new(big.Int).SetInt64((ownerId.Int64() + slider<<i) % ID_MAX).Text(16)
 		closest := a.Search(searchId)
-		if closest.ID == a.owner.ID {
-			break
-		}
-		//searchMessage := protocol.NewMessage().MakeSearch(searchId, a.owner)
-		if i >= a.fingerTable.Len() {
-			a.fingerTable = append(a.fingerTable, *closest.Search(searchId, &a.owner))
-		} else {
-			a.fingerTable[i] = *closest.Search(searchId, &a.owner)
-		}
+		searchMessage := protocol.NewMessage().MakeSearch(searchId, a.owner)
+		a.fingerTable[i] = peerNet.Search(*searchMessage.Marshal(), *closest)
 
 	}
 	a.modifySem.Release(1)
 }
 
-// MaintainNeighbors This function checks to make sure the closest neighbour is still online. In case its disconnected
-// The next predecessor is checked instead./*
-func (a *Ring) MaintainNeighbors() {
-	if a.neighbors.Len() == 0 {
-		return
-	}
-	ownerId := a.owner.ID
-	index := 0
+/*
 
-	for i := 0; i < a.neighbors.Len(); i++ {
-		if a.neighbors.Get(i).ID < ownerId {
-			index++
+func (a Ring) Search(term string) *Peer {
+	pre := a.predecessors
+	succ := a.successors
+	if term <= a.owner.ID {
+		if term == a.owner.ID {
+			return &a.owner
 		} else {
-			break
+			if pre.Len() <= 0 {
+				log.Println("Got search request for smaller id, but have no predecessors.")
+				return nil
+			} else {
+				log.Println("WARNING: Got ID - search smaller than self")
+				return &a.predecessors[0]
+			}
 		}
-	}
+	} else{
 
-	var resList *PeerList
-
-	for i := 1; i <= a.neighbors.Len(); i++ {
-		peer := a.neighbors.Get(index - i%a.neighbors.Len())
-		resList = peer.Notify(a.owner)
-		if resList == nil {
-			a.RemoveNeighbor(index - i%a.neighbors.Len())
-			i--
-		} else {
-			break
+		if succ.Len() == 0{
+			return nil
 		}
-		if i == resList.Len() {
-			log.Println("WARNING: ran out of neighbors")
-			a.AddNeighbour(*a.Search(a.owner.ID))
-		}
-	}
+		if term <= succ[succ.Len() -1].ID{
+			var ret *Peer
+			for i := 0; i < succ.Len(); i++{
+				if succ[i].ID > term{
+					ret = &succ[i]
+				} else{break}
+			}
+			return ret
+		} else{
+			finger := a.fingerTable
+			if term <= finger[finger.Len() -1].ID{
+				var ret *Peer
+				for i :=
 
-	for i := 0; i < resList.Len(); i++ {
-		a.AddNeighbour(*resList.Get(i))
+
+			} else{return nil}
+
+		}
 	}
 }
+
+/*
+func fingerSearch(id string) *Peer {
+	var foundPeer *Peer = nil
+	searchTerm, _ := new(big.Int).SetString(id, 16)
+	i := 0
+	for ; i < fingerTable.Len(); i++ {
+		tmp, noProbs := new(big.Int).SetString(fingerTable[i].ID, 16)
+		if noProbs && tmp.Cmp(searchTerm) > 0 {
+			foundPeer = &fingerTable[i]
+		} else if !noProbs {
+			log.Println("PROBS!")
+		}
+	}
+	return foundPeer
+}
+
+
+*/
+/*Typedef needed to aid in sorting.*/
